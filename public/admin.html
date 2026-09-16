@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hawker Alert · Admin</title>
+<style>
+  body { font-family: -apple-system, Roboto, Arial, sans-serif; background: #f5f2ea; margin: 0; padding: 16px; }
+  .container { max-width: 600px; margin: 0 auto; }
+  h1 { font-size: 20px; }
+  .card {
+    background: white; border-radius: 12px; padding: 14px 16px;
+    margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .req-name { font-size: 17px; font-weight: 700; }
+  .req-meta { font-size: 13px; color: #777; margin-top: 4px; }
+  button {
+    margin-top: 10px; padding: 8px 14px; border: none; border-radius: 8px;
+    background: #1c1b18; color: white; font-weight: 600; cursor: pointer;
+  }
+  .empty { text-align: center; color: #777; margin-top: 40px; }
+  .note { font-size: 13px; color: #a01f1f; background: #fff3f3; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📋 Pending area requests</h1>
+  <div class="note">
+    ⚠️ No login on this page in v1 — anyone with the URL can see and resolve requests.
+    Fine for a small pilot with people you trust; add authentication before wider rollout.
+  </div>
+  <div id="list"><p class="empty">Loading…</p></div>
+</div>
+
+<script>
+async function load() {
+  const res = await fetch('/api/area-requests');
+  const data = await res.json();
+  const list = document.getElementById('list');
+  if (!data.requests.length) {
+    list.innerHTML = '<p class="empty">No pending requests.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  data.requests.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'card';
+    const time = new Date(r.created_at).toLocaleString();
+    div.innerHTML = `
+      <div class="req-name">${escapeHtml(r.requested_name)}</div>
+      <div class="req-meta">Requested by: ${r.phone || 'unknown'} · ${time}</div>
+      <button onclick="resolve(${r.id})">Mark as added / resolved</button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function resolve(id) {
+  await fetch(`/api/area-requests/${id}/resolve`, { method: 'POST' });
+  load();
+}
+
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

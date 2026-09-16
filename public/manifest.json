@@ -1,0 +1,9 @@
+{
+  "name": "Hawker Alert",
+  "short_name": "HawkerAlert",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f2ea",
+  "theme_color": "#1c1b18",
+  "icons": []
+}

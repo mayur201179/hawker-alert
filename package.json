@@ -1,0 +1,13 @@
+{
+  "name": "hawker-alert",
+  "version": "0.1.0",
+  "description": "Locality-based instant alert system for street hawkers",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.23.0"
+  }
+}

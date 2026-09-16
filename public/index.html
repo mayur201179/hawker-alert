@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Hawker Alert · हॉकर अलर्ट · हॉकर सूचना</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --red: #d32f2f;
+    --red-dark: #a01f1f;
+    --green: #2e7d32;
+    --bg: #f5f2ea;
+    --ink: #1c1b18;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Roboto, "Noto Sans Devanagari", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding-bottom: 40px;
+  }
+  header {
+    background: var(--ink);
+    color: white;
+    padding: 18px 16px;
+    text-align: center;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; font-size: 14px; opacity: 0.8; }
+  .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 15px; }
+  input, select {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid #ccc;
+    margin-bottom: 14px;
+  }
+  button {
+    width: 100%;
+    padding: 14px;
+    font-size: 17px;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--ink); color: white; }
+  .btn-alert {
+    background: var(--red);
+    color: white;
+    font-size: 22px;
+    padding: 28px 14px;
+    border-radius: 18px;
+    box-shadow: 0 4px 0 var(--red-dark);
+  }
+  .btn-alert:active { transform: translateY(4px); box-shadow: none; }
+  .btn-alert:disabled { background: #999; box-shadow: none; }
+  #screen-app { display: none; }
+  .area-pill {
+    display: inline-block;
+    background: #eee;
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .feed-item {
+    border-left: 5px solid var(--red);
+    background: #fff3f3;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+  .feed-item .time { color: #777; font-size: 12px; display: block; margin-top: 4px; }
+  .muted { color: #777; font-size: 13px; }
+  .status-msg { text-align: center; font-size: 14px; margin-top: 10px; min-height: 20px; }
+  .status-ok { color: var(--green); }
+  .status-err { color: var(--red); }
+  .switch-user {
+    text-align: center;
+    font-size: 13px;
+    color: #555;
+    margin-top: 6px;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚨 Hawker Alert · हॉकर अलर्ट · हॉकर सूचना</h1>
+  <p>Warn each other. Save your goods.<br>एक-दूसरे को सावधान करें। · एकमेकांना सावध करा, माल वाचवा.</p>
+</header>
+
+<div class="container">
+
+  <!-- REGISTRATION SCREEN -->
+  <div id="screen-register" class="card">
+    <h2 style="margin-top:0;">Join your group<br><span style="font-size:15px; font-weight:500;">अपने ग्रुप में शामिल हों · तुमच्या गटात सामील व्हा</span></h2>
+    <label>Your name / आपका नाम / तुमचे नाव</label>
+    <input id="reg-name" type="text" placeholder="e.g. Ramesh">
+
+    <label>Phone number / फ़ोन नंबर / फोन नंबर</label>
+    <input id="reg-phone" type="tel" placeholder="10-digit mobile number">
+
+    <label>Your area / आपका इलाका / तुमचा परिसर</label>
+    <select id="reg-area">
+      <option value="">— Select your area / इलाका चुनें / परिसर निवडा —</option>
+    </select>
+
+    <div id="request-area-block" style="margin-top:-8px; margin-bottom:14px;">
+      <span class="switch-user" onclick="toggleRequestArea()">Don't see your area? Request it / आपका इलाका नहीं दिख रहा? / तुमचा परिसर दिसत नाही?</span>
+      <div id="request-area-form" style="display:none; margin-top:10px;">
+        <input id="request-area-name" type="text" placeholder="Type your area name (any language)">
+        <button type="button" class="btn-primary" style="background:#555;" onclick="submitAreaRequest()">Send request / अनुरोध भेजें</button>
+        <div id="request-area-status" class="status-msg"></div>
+      </div>
+    </div>
+
+    <button class="btn-primary" onclick="register()">Join / जुड़ें / सामील व्हा</button>
+    <div id="reg-status" class="status-msg"></div>
+  </div>
+
+  <!-- MAIN APP SCREEN -->
+  <div id="screen-app">
+    <div class="card" style="text-align:center;">
+      <div class="area-pill" id="my-area">—</div>
+      <div class="muted" id="my-info"></div>
+      <div style="height:14px;"></div>
+      <button class="btn-alert" id="alert-btn" onclick="sendAlert()">
+        🚨 TAP TO ALERT<br><span style="font-size:15px;">BMC आ रही है — अलर्ट भेजें</span><br><span style="font-size:15px;">बीएमसी येत आहे — अलर्ट पाठवा</span>
+      </button>
+      <div id="alert-status" class="status-msg"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Live alerts in your area<br><span style="font-size:14px; font-weight:500;">आपके इलाके के अलर्ट · तुमच्या परिसरातील अलर्ट</span></h3>
+      <div id="feed"><p class="muted">No alerts yet. Stay safe! / अभी कोई अलर्ट नहीं। / अजून अलर्ट नाही, सुरक्षित रहा!</p></div>
+    </div>
+
+    <div class="switch-user" onclick="logout()">Not you? Switch account / खाता बदलें / खाते बदला</div>
+  </div>
+
+</div>
+
+<audio id="alert-sound" preload="auto">
+  <source src="alert.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+const API = '';
+let me = JSON.parse(localStorage.getItem('hawker_me') || 'null');
+let lastPoll = 0;
+let pollTimer = null;
+
+function areaLabelText(a) {
+  if (!a) return '—';
+  return `${a.en} / ${a.hi} / ${a.mr}`;
+}
+
+function showScreen() {
+  if (me && me.phone && me.area) {
+    document.getElementById('screen-register').style.display = 'none';
+    document.getElementById('screen-app').style.display = 'block';
+    document.getElementById('my-area').textContent = areaLabelText(me.areaLabel);
+    document.getElementById('my-info').textContent = me.name + ' · ' + me.phone;
+    lastPoll = Date.now() - 1000 * 60 * 60; // show last hour on load
+    startPolling();
+  } else {
+    document.getElementById('screen-register').style.display = 'block';
+    document.getElementById('screen-app').style.display = 'none';
+    loadAreaOptions();
+  }
+}
+
+async function loadAreaOptions() {
+  const select = document.getElementById('reg-area');
+  try {
+    const res = await fetch(API + '/api/areas');
+    const data = await res.json();
+    select.innerHTML = '<option value="">— Select your area / इलाका चुनें / परिसर निवडा —</option>';
+    data.areas.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = `${a.en} / ${a.hi} / ${a.mr}` + (a.members ? ` (${a.members})` : '');
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    select.innerHTML = '<option value="">Could not load areas — check server connection</option>';
+  }
+}
+
+function toggleRequestArea() {
+  const form = document.getElementById('request-area-form');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function submitAreaRequest() {
+  const name = document.getElementById('request-area-name').value.trim();
+  const phone = document.getElementById('reg-phone').value.trim();
+  const statusEl = document.getElementById('request-area-status');
+  if (!name) {
+    statusEl.className = 'status-msg status-err';
+    statusEl.textContent = 'Please type an area name / कृपया इलाके का नाम लिखें';
+    return;
+  }
+  try {
+    const res = await fetch(API + '/api/area-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requested_name: name, phone })
+    });
+    if (!res.ok) throw new Error('Failed');
+    statusEl.className = 'status-msg status-ok';
+    statusEl.textContent = 'Sent! You will be able to select it once it is added. / भेज दिया गया!';
+    document.getElementById('request-area-name').value = '';
+  } catch (e) {
+    statusEl.className = 'status-msg status-err';
+    statusEl.textContent = 'Error sending request. Try again.';
+  }
+}
+
+async function register() {
+  const name = document.getElementById('reg-name').value.trim();
+  const phone = document.getElementById('reg-phone').value.trim();
+  const area = document.getElementById('reg-area').value;
+  const statusEl = document.getElementById('reg-status');
+  statusEl.textContent = '';
+
+  if (!name || !phone || !area) {
+    statusEl.className = 'status-msg status-err';
+    statusEl.textContent = 'Please fill all fields / कृपया सभी फ़ील्ड भरें / कृपया सर्व माहिती भरा';
+    return;
+  }
+
+  try {
+    const res = await fetch(API + '/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, phone, area })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    me = { name: data.hawker.name, phone: data.hawker.phone, area: data.hawker.area, areaLabel: data.areaLabel };
+    localStorage.setItem('hawker_me', JSON.stringify(me));
+    showScreen();
+  } catch (e) {
+    statusEl.className = 'status-msg status-err';
+    statusEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+function logout() {
+  clearInterval(pollTimer);
+  localStorage.removeItem('hawker_me');
+  me = null;
+  showScreen();
+}
+
+async function sendAlert() {
+  const btn = document.getElementById('alert-btn');
+  const statusEl = document.getElementById('alert-status');
+  btn.disabled = true;
+  statusEl.className = 'status-msg';
+  statusEl.textContent = 'Sending...';
+
+  try {
+    const res = await fetch(API + '/api/alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ area: me.area, phone: me.phone })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    statusEl.className = 'status-msg status-ok';
+    statusEl.textContent = `Alert sent to ${data.notified} hawker(s) nearby.`;
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  } catch (e) {
+    statusEl.className = 'status-msg status-err';
+    statusEl.textContent = 'Error: ' + e.message;
+  } finally {
+    setTimeout(() => { btn.disabled = false; }, 3000);
+  }
+}
+
+function renderFeed(alerts) {
+  if (!alerts.length) return;
+  const feed = document.getElementById('feed');
+  if (feed.querySelector('.muted')) feed.innerHTML = '';
+  alerts.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'feed-item';
+    const time = new Date(a.created_at).toLocaleTimeString();
+    div.innerHTML = `⚠️ ${a.message}<span class="time">${time}</span>`;
+    feed.prepend(div);
+  });
+  try {
+    const audio = document.getElementById('alert-sound');
+    audio.play().catch(() => {});
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
+}
+
+async function poll() {
+  try {
+    const res = await fetch(API + `/api/alerts?area=${encodeURIComponent(me.area)}&since=${lastPoll}`);
+    const data = await res.json();
+    if (data.alerts && data.alerts.length) {
+      renderFeed(data.alerts);
+      lastPoll = data.alerts[data.alerts.length - 1].created_at;
+    }
+  } catch (e) { /* network hiccup, ignore */ }
+}
+
+function startPolling() {
+  poll();
+  pollTimer = setInterval(poll, 3000);
+}
+
+showScreen();
+</script>
+</body>
+</html>

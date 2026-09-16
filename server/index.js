@@ -1,0 +1,276 @@
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const { Pool } = require('pg');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const AREAS_PATH = path.join(__dirname, 'areas.json');
+
+// ---------- Postgres connection ----------
+// DATABASE_URL should be set to your Supabase "Session pooler" connection string
+// (Project → Connect → Session pooler), with [YOUR-PASSWORD] replaced with your
+// actual database password. For local testing, set it yourself, e.g.:
+//   DATABASE_URL=postgres://postgres:yourpassword@localhost:5432/hawkeralert
+if (!process.env.DATABASE_URL) {
+  console.error('Missing DATABASE_URL environment variable — set it to your Postgres connection string.');
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Any hosted Postgres provider (Supabase, Render, etc.) requires SSL; only a
+  // local database on your own machine doesn't. Detecting by "is it localhost"
+  // is more robust than matching specific provider hostnames.
+  ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL || '')
+    ? false
+    : { rejectUnauthorized: false }
+});
+
+// ---------- Canonical area list ----------
+// Edit server/areas.json to add/remove real localities. Using a fixed list (instead
+// of free-text entry) means two hawkers can never end up in different groups just
+// because they spelled the area differently or typed it in a different language.
+let AREAS = [];
+function loadAreas() {
+  try {
+    AREAS = JSON.parse(fs.readFileSync(AREAS_PATH, 'utf8'));
+  } catch (e) {
+    console.error('Could not load areas.json:', e.message);
+    AREAS = [];
+  }
+}
+loadAreas();
+
+function findArea(id) {
+  return AREAS.find(a => a.id === id);
+}
+
+// ---------- Schema ----------
+async function initSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS hawkers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL UNIQUE,
+      area TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alerts (
+      id SERIAL PRIMARY KEY,
+      area TEXT NOT NULL,
+      message TEXT NOT NULL,
+      triggered_by_phone TEXT,
+      created_at BIGINT NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS area_requests (
+      id SERIAL PRIMARY KEY,
+      requested_name TEXT NOT NULL,
+      phone TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at BIGINT NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_hawkers_area ON hawkers(area);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_alerts_area_time ON alerts(area, created_at);`);
+}
+
+// ---------- Simple in-memory rate limit (per phone) ----------
+// Prevents accidental spam / prank-mashing of the alert button.
+// (This resets on restart, which is fine — it's just a soft anti-spam guard,
+// not something that needs to survive across deploys.)
+const lastAlertByPhone = new Map(); // phone -> timestamp
+const ALERT_COOLDOWN_MS = 60 * 1000; // 1 alert per phone per 60s
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// ---------- Helpers ----------
+function normalizePhone(phone) {
+  return String(phone || '').replace(/[^\d+]/g, '');
+}
+
+// ---------- Routes ----------
+
+// Register (or update) a hawker
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, phone, area } = req.body;
+    if (!name || !phone || !area) {
+      return res.status(400).json({ error: 'name, phone, and area are required' });
+    }
+    const cleanPhone = normalizePhone(phone);
+    if (cleanPhone.length < 6) {
+      return res.status(400).json({ error: 'invalid phone number' });
+    }
+    const areaEntry = findArea(area);
+    if (!areaEntry) {
+      return res.status(400).json({ error: 'Please pick an area from the list' });
+    }
+    const cleanArea = areaEntry.id;
+
+    const existing = await pool.query('SELECT * FROM hawkers WHERE phone = $1', [cleanPhone]);
+    if (existing.rows.length) {
+      await pool.query('UPDATE hawkers SET name = $1, area = $2 WHERE phone = $3',
+        [name.trim(), cleanArea, cleanPhone]);
+    } else {
+      await pool.query(
+        'INSERT INTO hawkers (name, phone, area, created_at) VALUES ($1, $2, $3, $4)',
+        [name.trim(), cleanPhone, cleanArea, Date.now()]
+      );
+    }
+    const row = await pool.query('SELECT * FROM hawkers WHERE phone = $1', [cleanPhone]);
+    res.json({ ok: true, hawker: row.rows[0], areaLabel: areaEntry });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// List all canonical areas, with live member counts merged in
+app.get('/api/areas', async (req, res) => {
+  try {
+    const counts = await pool.query('SELECT area, COUNT(*) as members FROM hawkers GROUP BY area');
+    const countMap = Object.fromEntries(counts.rows.map(c => [c.area, Number(c.members)]));
+    const areas = AREAS.map(a => ({ ...a, members: countMap[a.id] || 0 }));
+    res.json({ areas });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Trigger an alert for an area
+app.post('/api/alert', async (req, res) => {
+  try {
+    const { area, phone, message } = req.body;
+    if (!area || !phone) {
+      return res.status(400).json({ error: 'area and phone are required' });
+    }
+    const cleanPhone = normalizePhone(phone);
+    const areaEntry = findArea(area);
+    if (!areaEntry) {
+      return res.status(400).json({ error: 'unknown area' });
+    }
+    const cleanArea = areaEntry.id;
+
+    const now = Date.now();
+    const last = lastAlertByPhone.get(cleanPhone);
+    if (last && now - last < ALERT_COOLDOWN_MS) {
+      const waitSec = Math.ceil((ALERT_COOLDOWN_MS - (now - last)) / 1000);
+      return res.status(429).json({ error: `Please wait ${waitSec}s before sending another alert` });
+    }
+
+    const finalMessage = (message && message.trim()) ||
+      'BMC team spotted nearby — cover your goods! / BMC टीम पास में है — अपना सामान ढकें! / बीएमसी टीम जवळ आहे — तुमचा माल झाकून घ्या!';
+
+    await pool.query(
+      'INSERT INTO alerts (area, message, triggered_by_phone, created_at) VALUES ($1, $2, $3, $4)',
+      [cleanArea, finalMessage, cleanPhone, now]
+    );
+
+    lastAlertByPhone.set(cleanPhone, now);
+
+    const memberCountRes = await pool.query('SELECT COUNT(*) as c FROM hawkers WHERE area = $1', [cleanArea]);
+    res.json({ ok: true, notified: Number(memberCountRes.rows[0].c) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Poll for alerts in an area since a given timestamp
+app.get('/api/alerts', async (req, res) => {
+  try {
+    const areaEntry = findArea(req.query.area);
+    if (!areaEntry) return res.status(400).json({ error: 'unknown area' });
+    const area = areaEntry.id;
+    const since = Number(req.query.since || 0);
+
+    const result = await pool.query(
+      `SELECT id, area, message, triggered_by_phone, created_at
+       FROM alerts
+       WHERE area = $1 AND created_at > $2
+       ORDER BY created_at ASC
+       LIMIT 50`,
+      [area, since]
+    );
+
+    res.json({ alerts: result.rows, serverTime: Date.now() });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+app.get('/api/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, db: 'connected' });
+  } catch (e) {
+    res.status(500).json({ ok: false, db: 'error', error: e.message });
+  }
+});
+
+// A hawker requests a new area that isn't in the picker yet.
+// This does NOT add it to the live list automatically — it queues it for
+// whoever administers areas.json to review and add (prevents spam/duplicate
+// near-identical entries from fragmenting the real list).
+app.post('/api/area-requests', async (req, res) => {
+  try {
+    const { requested_name, phone } = req.body;
+    if (!requested_name || !requested_name.trim()) {
+      return res.status(400).json({ error: 'requested_name is required' });
+    }
+    await pool.query(
+      `INSERT INTO area_requests (requested_name, phone, status, created_at) VALUES ($1, $2, 'pending', $3)`,
+      [requested_name.trim(), phone ? normalizePhone(phone) : null, Date.now()]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Admin view: list pending area requests so you know what to add to areas.json.
+// NOTE: this has no authentication in v1 — anyone with the server URL can see it.
+// Fine for a small pilot; needs a login before wider rollout.
+app.get('/api/area-requests', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM area_requests WHERE status = 'pending' ORDER BY created_at DESC`
+    );
+    res.json({ requests: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Admin action: mark a request as handled (after you've added it to areas.json
+// and restarted the server, or decided not to add it).
+app.post('/api/area-requests/:id/resolve', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await pool.query(`UPDATE area_requests SET status = 'resolved' WHERE id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+initSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Hawker Alert server running on http://localhost:${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('Failed to initialize database schema:', err);
+    process.exit(1);
+  });
