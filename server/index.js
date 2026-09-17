@@ -159,6 +159,20 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// Check whether a phone number is still a registered hawker. The app calls this
+// on load to catch the case where the phone remembers "you're logged in" locally,
+// but an admin reset (or manual deletion) has since wiped that record server-side.
+app.get('/api/hawkers/:phone', async (req, res) => {
+  try {
+    const cleanPhone = normalizePhone(req.params.phone);
+    const row = await pool.query('SELECT phone FROM hawkers WHERE phone = $1', [cleanPhone]);
+    res.json({ exists: row.rows.length > 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 // List all canonical areas, with live member counts merged in
 app.get('/api/areas', async (req, res) => {
   try {
@@ -363,6 +377,7 @@ app.post('/api/admin/reset', async (req, res) => {
     await pool.query('DELETE FROM alerts');
     await pool.query('DELETE FROM hawkers');
     await pool.query('DELETE FROM area_requests');
+    await pool.query('DELETE FROM push_subscriptions');
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
