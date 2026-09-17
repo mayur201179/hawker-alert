@@ -20,6 +20,8 @@
     background: #1c1b18; color: white; font-weight: 600; cursor: pointer;
   }
   .delete-btn { background: #a01f1f; margin-top: 0; padding: 6px 12px; font-size: 13px; }
+  .dismiss-btn { background: #999; }
+  .approve-btn { background: #2e7d32; }
   .empty { text-align: center; color: #777; margin-top: 20px; }
   .note { font-size: 13px; color: #a01f1f; background: #fff3f3; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
   .area-group-title { font-size: 14px; font-weight: 700; color: #555; margin: 18px 0 8px; }
@@ -30,17 +32,29 @@
   .hawker-row:last-child { border-bottom: none; }
   .hawker-name { font-weight: 600; }
   .hawker-phone { font-size: 13px; color: #777; }
+  .push-badge { font-size: 12px; margin-left: 6px; }
+  .approve-form label { display: block; font-size: 12px; color: #555; margin: 8px 0 2px; }
+  .approve-form input {
+    width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #ccc;
+    font-size: 14px; box-sizing: border-box;
+  }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-row button { margin-top: 0; flex: 1; }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="note">
     ⚠️ No login on this page in v1 — anyone with the URL can see requests, view hawkers,
-    and delete data. Fine for a small pilot with people you trust; add authentication
-    before wider rollout.
+    add areas, and delete data. Fine for a small pilot with people you trust; add
+    authentication before wider rollout.
   </div>
 
   <h1>👥 Registered hawkers</h1>
+  <p style="font-size:13px; color:#777; margin-top:-8px;">
+    🔔 = has push notifications working on that device · 🔕 = does not (they'll only get
+    alerts while the app is open)
+  </p>
   <div class="card" style="text-align:center;">
     <button id="reset-btn" style="background:#a01f1f;" onclick="resetAll()">🗑️ Clear EVERYTHING (all hawkers, alerts, requests)</button>
     <div id="reset-status" style="font-size:13px; margin-top:8px;"></div>
@@ -48,6 +62,11 @@
   <div id="hawker-list"><p class="empty">Loading…</p></div>
 
   <h1>📋 Pending area requests</h1>
+  <p style="font-size:13px; color:#777; margin-top:-8px;">
+    Approving adds the area right away — no GitHub edit or redeploy needed. Hindi/Marathi
+    are optional; if left blank, the English name is used for those too (not an automatic
+    translation — fill them in yourself if you know the local name).
+  </p>
   <div id="list"><p class="empty">Loading…</p></div>
 </div>
 
@@ -82,7 +101,6 @@ async function loadHawkers() {
       container.innerHTML = '<p class="empty">No hawkers registered yet.</p>';
       return;
     }
-    // Group by area for readability
     const groups = {};
     data.hawkers.forEach(h => {
       const label = h.areaLabel ? h.areaLabel.en : h.area;
@@ -102,9 +120,12 @@ async function loadHawkers() {
       groups[label].forEach(h => {
         const row = document.createElement('div');
         row.className = 'hawker-row';
+        const pushBadge = h.hasPush
+          ? '<span class="push-badge" title="Push notifications active">🔔</span>'
+          : '<span class="push-badge" title="No push subscription — app-open only">🔕</span>';
         row.innerHTML = `
           <div>
-            <div class="hawker-name">${escapeHtml(h.name)}</div>
+            <div class="hawker-name">${escapeHtml(h.name)} ${pushBadge}</div>
             <div class="hawker-phone">${escapeHtml(h.phone)}</div>
           </div>
           <button class="delete-btn" onclick="deleteHawker(${h.id}, '${escapeHtml(h.name)}')">Delete</button>
@@ -145,13 +166,45 @@ async function loadRequests() {
     div.innerHTML = `
       <div class="req-name">${escapeHtml(r.requested_name)}</div>
       <div class="req-meta">Requested by: ${r.phone || 'unknown'} · ${time}</div>
-      <button onclick="resolveRequest(${r.id})">Mark as added / resolved</button>
+      <div class="approve-form">
+        <label>English name</label>
+        <input id="en-${r.id}" value="${escapeHtml(r.requested_name)}">
+        <label>Hindi (optional)</label>
+        <input id="hi-${r.id}" placeholder="leave blank to use English name">
+        <label>Marathi (optional)</label>
+        <input id="mr-${r.id}" placeholder="leave blank to use English name">
+        <div class="btn-row">
+          <button class="approve-btn" onclick="approveRequest(${r.id})">✅ Approve & Add</button>
+          <button class="dismiss-btn" onclick="dismissRequest(${r.id})">Dismiss</button>
+        </div>
+      </div>
     `;
     list.appendChild(div);
   });
 }
 
-async function resolveRequest(id) {
+async function approveRequest(requestId) {
+  const en = document.getElementById(`en-${requestId}`).value.trim();
+  const hi = document.getElementById(`hi-${requestId}`).value.trim();
+  const mr = document.getElementById(`mr-${requestId}`).value.trim();
+  if (!en) { alert('English name is required.'); return; }
+  try {
+    const res = await fetch('/api/admin/areas/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ en, hi, mr, requestId })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'failed');
+    alert(`Added! Hawkers can now select "${data.area.en}" right away.`);
+    loadRequests();
+  } catch (e) {
+    alert('Error adding area: ' + e.message);
+  }
+}
+
+async function dismissRequest(id) {
+  if (!confirm('Dismiss this request WITHOUT adding it as an area?')) return;
   await fetch(`/api/area-requests/${id}/resolve`, { method: 'POST' });
   loadRequests();
 }
