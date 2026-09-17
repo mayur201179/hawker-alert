@@ -2,10 +2,24 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
+const webpush = require('web-push');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const AREAS_PATH = path.join(__dirname, 'areas.json');
+
+// ---------- Push notifications (so alerts reach a phone even with the app closed) ----------
+// Requires VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables. If they're
+// not set, push notifications are simply skipped — polling (while the app is open)
+// still works fine either way.
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const pushConfigured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+if (pushConfigured) {
+  webpush.setVapidDetails('mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn('VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push notifications disabled, polling still works.');
+}
 
 // ---------- Postgres connection ----------
 // DATABASE_URL should be set to your Supabase "Session pooler" connection string
@@ -79,6 +93,15 @@ async function initSchema() {
       created_at BIGINT NOT NULL
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      phone TEXT PRIMARY KEY,
+      area TEXT NOT NULL,
+      subscription TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    );
+  `);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_hawkers_area ON hawkers(area);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_alerts_area_time ON alerts(area, created_at);`);
 }
@@ -149,6 +172,36 @@ app.get('/api/areas', async (req, res) => {
   }
 });
 
+// Frontend fetches this to know the public key to subscribe with. Returns null
+// if push isn't configured on this server (frontend just skips push then).
+app.get('/api/vapid-public-key', (req, res) => {
+  res.json({ publicKey: pushConfigured ? VAPID_PUBLIC_KEY : null });
+});
+
+// Save (or update) a hawker's push subscription for their area.
+app.post('/api/push-subscribe', async (req, res) => {
+  try {
+    const { phone, area, subscription } = req.body;
+    if (!phone || !area || !subscription) {
+      return res.status(400).json({ error: 'phone, area, and subscription are required' });
+    }
+    const areaEntry = findArea(area);
+    if (!areaEntry) return res.status(400).json({ error: 'unknown area' });
+    const cleanPhone = normalizePhone(phone);
+
+    await pool.query(
+      `INSERT INTO push_subscriptions (phone, area, subscription, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (phone) DO UPDATE SET area = $2, subscription = $3, created_at = $4`,
+      [cleanPhone, areaEntry.id, JSON.stringify(subscription), Date.now()]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 // Trigger an alert for an area
 app.post('/api/alert', async (req, res) => {
   try {
@@ -181,7 +234,32 @@ app.post('/api/alert', async (req, res) => {
     lastAlertByPhone.set(cleanPhone, now);
 
     const memberCountRes = await pool.query('SELECT COUNT(*) as c FROM hawkers WHERE area = $1', [cleanArea]);
-    res.json({ ok: true, notified: Number(memberCountRes.rows[0].c) });
+
+    let pushSent = 0;
+    if (pushConfigured) {
+      const subs = await pool.query('SELECT phone, subscription FROM push_subscriptions WHERE area = $1', [cleanArea]);
+      const payload = JSON.stringify({ title: '🚨 Hawker Alert', body: finalMessage });
+      const staleToPrune = [];
+
+      await Promise.all(subs.rows.map(async (row) => {
+        try {
+          await webpush.sendNotification(JSON.parse(row.subscription), payload);
+          pushSent++;
+        } catch (err) {
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            staleToPrune.push(row.phone); // subscription dead — browser data cleared, etc.
+          } else {
+            console.warn('Push send failed for', row.phone, ':', err.message);
+          }
+        }
+      }));
+
+      if (staleToPrune.length) {
+        await pool.query('DELETE FROM push_subscriptions WHERE phone = ANY($1)', [staleToPrune]);
+      }
+    }
+
+    res.json({ ok: true, notified: Number(memberCountRes.rows[0].c), pushSent });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server error' });
