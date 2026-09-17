@@ -62,9 +62,14 @@ async function initSchema() {
       area TEXT NOT NULL,
       message TEXT NOT NULL,
       triggered_by_phone TEXT,
+      triggered_by_name TEXT,
       created_at BIGINT NOT NULL
     );
   `);
+  // Migration for databases created before triggered_by_name existed (e.g. your
+  // already-deployed Supabase database) — safe to run every startup, it's a no-op
+  // once the column exists.
+  await pool.query(`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS triggered_by_name TEXT;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS area_requests (
       id SERIAL PRIMARY KEY,
@@ -123,7 +128,8 @@ app.post('/api/register', async (req, res) => {
       );
     }
     const row = await pool.query('SELECT * FROM hawkers WHERE phone = $1', [cleanPhone]);
-    res.json({ ok: true, hawker: row.rows[0], areaLabel: areaEntry });
+    const hawker = { ...row.rows[0], created_at: Number(row.rows[0].created_at) };
+    res.json({ ok: true, hawker, areaLabel: areaEntry });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server error' });
@@ -146,7 +152,7 @@ app.get('/api/areas', async (req, res) => {
 // Trigger an alert for an area
 app.post('/api/alert', async (req, res) => {
   try {
-    const { area, phone, message } = req.body;
+    const { area, phone, name, message } = req.body;
     if (!area || !phone) {
       return res.status(400).json({ error: 'area and phone are required' });
     }
@@ -168,8 +174,8 @@ app.post('/api/alert', async (req, res) => {
       'BMC team spotted nearby — cover your goods! / BMC टीम पास में है — अपना सामान ढकें! / बीएमसी टीम जवळ आहे — तुमचा माल झाकून घ्या!';
 
     await pool.query(
-      'INSERT INTO alerts (area, message, triggered_by_phone, created_at) VALUES ($1, $2, $3, $4)',
-      [cleanArea, finalMessage, cleanPhone, now]
+      'INSERT INTO alerts (area, message, triggered_by_phone, triggered_by_name, created_at) VALUES ($1, $2, $3, $4, $5)',
+      [cleanArea, finalMessage, cleanPhone, (name || '').trim() || null, now]
     );
 
     lastAlertByPhone.set(cleanPhone, now);
@@ -191,7 +197,7 @@ app.get('/api/alerts', async (req, res) => {
     const since = Number(req.query.since || 0);
 
     const result = await pool.query(
-      `SELECT id, area, message, triggered_by_phone, created_at
+      `SELECT id, area, message, triggered_by_phone, triggered_by_name, created_at
        FROM alerts
        WHERE area = $1 AND created_at > $2
        ORDER BY created_at ASC
@@ -199,7 +205,13 @@ app.get('/api/alerts', async (req, res) => {
       [area, since]
     );
 
-    res.json({ alerts: result.rows, serverTime: Date.now() });
+    // node-postgres returns BIGINT columns as strings (to avoid silent precision
+    // loss on huge numbers), but that breaks `new Date(...)` on the frontend, which
+    // needs a real number. Converting here means every consumer of this API gets a
+    // correct numeric timestamp without having to remember to convert it themselves.
+    const alerts = result.rows.map(r => ({ ...r, created_at: Number(r.created_at) }));
+
+    res.json({ alerts, serverTime: Date.now() });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server error' });
@@ -244,7 +256,8 @@ app.get('/api/area-requests', async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM area_requests WHERE status = 'pending' ORDER BY created_at DESC`
     );
-    res.json({ requests: result.rows });
+    const requests = result.rows.map(r => ({ ...r, created_at: Number(r.created_at) }));
+    res.json({ requests });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server error' });
@@ -257,6 +270,21 @@ app.post('/api/area-requests/:id/resolve', async (req, res) => {
   try {
     const id = Number(req.params.id);
     await pool.query(`UPDATE area_requests SET status = 'resolved' WHERE id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Admin action: wipe ALL hawkers, alerts, and area requests. Meant for clearing
+// out test data before a real rollout. NOTE: no authentication in v1 — same caveat
+// as the rest of the admin endpoints; fine for a small trusted pilot only.
+app.post('/api/admin/reset', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM alerts');
+    await pool.query('DELETE FROM hawkers');
+    await pool.query('DELETE FROM area_requests');
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
