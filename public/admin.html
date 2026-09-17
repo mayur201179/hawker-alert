@@ -26,13 +26,32 @@
 <div class="container">
   <h1>📋 Pending area requests</h1>
   <div class="note">
-    ⚠️ No login on this page in v1 — anyone with the URL can see and resolve requests.
-    Fine for a small pilot with people you trust; add authentication before wider rollout.
+    ⚠️ No login on this page in v1 — anyone with the URL can see and resolve requests,
+    and can wipe all data. Fine for a small pilot with people you trust; add
+    authentication before wider rollout.
+  </div>
+  <div class="card" style="text-align:center;">
+    <button id="reset-btn" style="background:#a01f1f;" onclick="resetAll()">🗑️ Clear ALL test data (hawkers, alerts, requests)</button>
+    <div id="reset-status" style="font-size:13px; margin-top:8px;"></div>
   </div>
   <div id="list"><p class="empty">Loading…</p></div>
 </div>
 
 <script>
+async function resetAll() {
+  if (!confirm('This permanently deletes EVERY hawker, alert, and area request. Are you sure?')) return;
+  const statusEl = document.getElementById('reset-status');
+  statusEl.textContent = 'Clearing...';
+  try {
+    const res = await fetch('/api/admin/reset', { method: 'POST' });
+    if (!res.ok) throw new Error('failed');
+    statusEl.textContent = '✅ All data cleared.';
+    load();
+  } catch (e) {
+    statusEl.textContent = '❌ Error clearing data. Try again.';
+  }
+}
+
 async function load() {
   const res = await fetch('/api/area-requests');
   const data = await res.json();
@@ -45,7 +64,7 @@ async function load() {
   data.requests.forEach(r => {
     const div = document.createElement('div');
     div.className = 'card';
-    const time = new Date(r.created_at).toLocaleString();
+    const time = new Date(Number(r.created_at)).toLocaleString();
     div.innerHTML = `
       <div class="req-name">${escapeHtml(r.requested_name)}</div>
       <div class="req-meta">Requested by: ${r.phone || 'unknown'} · ${time}</div>
