@@ -167,6 +167,46 @@ let me = JSON.parse(localStorage.getItem('hawker_me') || 'null');
 let lastPoll = 0;
 let pollTimer = null;
 
+// ---------- Push notifications: reach the phone even when this page isn't open ----------
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function setupPush() {
+  // Silently skip if this browser doesn't support push (older browsers, some iOS
+  // versions unless the app is added to the home screen first) — polling while the
+  // app is open still works regardless.
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const keyRes = await fetch(API + '/api/vapid-public-key');
+    const keyData = await keyRes.json();
+    if (!keyData.publicKey) return; // server hasn't set up push (no VAPID keys) — nothing to do
+
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+      });
+    }
+
+    await fetch(API + '/api/push-subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: me.phone, area: me.area, subscription: subscription.toJSON() })
+    });
+  } catch (e) {
+    // Most common cause: the person dismissed the "allow notifications" browser
+    // prompt. Not fatal — polling still works while the app is open.
+    console.warn('Push setup skipped:', e.message);
+  }
+}
+
 function areaLabelText(a) {
   if (!a) return '—';
   return `${a.en} / ${a.hi} / ${a.mr}`;
@@ -180,6 +220,7 @@ function showScreen() {
     document.getElementById('my-info').textContent = me.name + ' · ' + me.phone;
     lastPoll = Date.now() - 1000 * 60 * 60; // show last hour on load
     startPolling();
+    setupPush(); // best-effort; silently does nothing if unsupported or not configured
   } else {
     document.getElementById('screen-register').style.display = 'block';
     document.getElementById('screen-app').style.display = 'none';
@@ -316,25 +357,34 @@ function enableSound() {
     audioCtx.resume();
     soundEnabled = true;
     document.getElementById('sound-banner').style.display = 'none';
-    playAlarmSound(); // short confirmation beep so they know it worked
+    playAlarmSound(1.2); // short confirmation beep so they know it worked
   } catch (e) { /* Web Audio unsupported on this browser; sound just won't play */ }
 }
 
-function playAlarmSound() {
+function playAlarmSound(duration = 6.5) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
-  // Three urgent beeps, alternating pitch.
-  [0, 0.35, 0.7].forEach((offset, i) => {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'square';
-    osc.frequency.value = i % 2 === 0 ? 880 : 660;
-    gain.gain.setValueAtTime(0.35, now + offset);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.3);
-    osc.connect(gain).connect(audioCtx.destination);
-    osc.start(now + offset);
-    osc.stop(now + offset + 0.3);
-  });
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth'; // harsher, more piercing/attention-grabbing than a pure tone
+  gain.gain.setValueAtTime(1.0, now); // max gain — the loudest this can go is capped
+                                       // by the phone's own volume/silent setting, which
+                                       // a web page cannot override (see note in chat)
+  osc.connect(gain).connect(audioCtx.destination);
+
+  // Classic siren: frequency sweeps up and down repeatedly for the full duration.
+  const sweepMs = 0.6; // one up-down cycle every 0.6s
+  let t = now;
+  while (t < now + duration) {
+    osc.frequency.setValueAtTime(600, t);
+    osc.frequency.linearRampToValueAtTime(1200, t + sweepMs / 2);
+    osc.frequency.linearRampToValueAtTime(600, t + sweepMs);
+    t += sweepMs;
+  }
+  gain.gain.setValueAtTime(1.0, now + duration - 0.1);
+  gain.gain.linearRampToValueAtTime(0, now + duration);
+  osc.start(now);
+  osc.stop(now + duration);
 }
 
 function renderFeed(alerts) {
