@@ -137,6 +137,10 @@
 
   <!-- MAIN APP SCREEN -->
   <div id="screen-app">
+    <div id="sound-banner" class="card" style="text-align:center; background:#fff3cd; cursor:pointer;" onclick="enableSound()">
+      🔊 <b>Tap here to turn on alert sound</b><br>
+      <span style="font-size:13px;">अलर्ट की आवाज़ चालू करने के लिए यहाँ दबाएँ · अलर्टचा आवाज सुरू करण्यासाठी इथे दाबा</span>
+    </div>
     <div class="card" style="text-align:center;">
       <div class="area-pill" id="my-area">—</div>
       <div class="muted" id="my-info"></div>
@@ -156,10 +160,6 @@
   </div>
 
 </div>
-
-<audio id="alert-sound" preload="auto">
-  <source src="alert.mp3" type="audio/mpeg">
-</audio>
 
 <script>
 const API = '';
@@ -278,11 +278,15 @@ async function sendAlert() {
   statusEl.className = 'status-msg';
   statusEl.textContent = 'Sending...';
 
+  // Backup unlock: if they never tapped the sound banner, this tap (a real user
+  // gesture) still unlocks audio for future incoming alerts this session.
+  if (!soundEnabled) enableSound();
+
   try {
     const res = await fetch(API + '/api/alert', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ area: me.area, phone: me.phone })
+      body: JSON.stringify({ area: me.area, phone: me.phone, name: me.name })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
@@ -297,6 +301,42 @@ async function sendAlert() {
   }
 }
 
+// ---------- Alarm sound (synthesized, no audio file needed) ----------
+// Browsers block audio from playing unless the page has had at least one direct
+// user tap first. So we lazily create the AudioContext, and only "unlock" it when
+// the person taps the sound banner (or the alert button itself) — after that one
+// tap, later alarm sounds triggered by *incoming* alerts (which aren't a tap by
+// this user) are allowed to play.
+let audioCtx = null;
+let soundEnabled = false;
+
+function enableSound() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume();
+    soundEnabled = true;
+    document.getElementById('sound-banner').style.display = 'none';
+    playAlarmSound(); // short confirmation beep so they know it worked
+  } catch (e) { /* Web Audio unsupported on this browser; sound just won't play */ }
+}
+
+function playAlarmSound() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  // Three urgent beeps, alternating pitch.
+  [0, 0.35, 0.7].forEach((offset, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = i % 2 === 0 ? 880 : 660;
+    gain.gain.setValueAtTime(0.35, now + offset);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(now + offset);
+    osc.stop(now + offset + 0.3);
+  });
+}
+
 function renderFeed(alerts) {
   if (!alerts.length) return;
   const feed = document.getElementById('feed');
@@ -304,14 +344,17 @@ function renderFeed(alerts) {
   alerts.forEach(a => {
     const div = document.createElement('div');
     div.className = 'feed-item';
-    const time = new Date(a.created_at).toLocaleTimeString();
-    div.innerHTML = `⚠️ ${a.message}<span class="time">${time}</span>`;
+    const time = new Date(Number(a.created_at)).toLocaleString();
+    const by = a.triggered_by_name ? `Alerted by: ${a.triggered_by_name}` : '';
+    div.innerHTML = `⚠️ ${a.message}<span class="time">${time}${by ? ' · ' + by : ''}</span>`;
     feed.prepend(div);
   });
-  try {
-    const audio = document.getElementById('alert-sound');
-    audio.play().catch(() => {});
-  } catch (e) {}
+  // Keep only the most recent 3 on screen (oldest ones drop off, feed is a
+  // scrolling list of what's *currently* relevant, not a permanent log).
+  const items = feed.querySelectorAll('.feed-item');
+  items.forEach((el, i) => { if (i >= 3) el.remove(); });
+
+  if (soundEnabled) playAlarmSound();
   if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
 }
 
