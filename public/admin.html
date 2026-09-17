@@ -7,7 +7,8 @@
 <style>
   body { font-family: -apple-system, Roboto, Arial, sans-serif; background: #f5f2ea; margin: 0; padding: 16px; }
   .container { max-width: 600px; margin: 0 auto; }
-  h1 { font-size: 20px; }
+  h1 { font-size: 20px; margin-top: 28px; }
+  h1:first-of-type { margin-top: 0; }
   .card {
     background: white; border-radius: 12px; padding: 14px 16px;
     margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
@@ -18,22 +19,35 @@
     margin-top: 10px; padding: 8px 14px; border: none; border-radius: 8px;
     background: #1c1b18; color: white; font-weight: 600; cursor: pointer;
   }
-  .empty { text-align: center; color: #777; margin-top: 40px; }
+  .delete-btn { background: #a01f1f; margin-top: 0; padding: 6px 12px; font-size: 13px; }
+  .empty { text-align: center; color: #777; margin-top: 20px; }
   .note { font-size: 13px; color: #a01f1f; background: #fff3f3; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
+  .area-group-title { font-size: 14px; font-weight: 700; color: #555; margin: 18px 0 8px; }
+  .hawker-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 4px; border-bottom: 1px solid #eee;
+  }
+  .hawker-row:last-child { border-bottom: none; }
+  .hawker-name { font-weight: 600; }
+  .hawker-phone { font-size: 13px; color: #777; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>📋 Pending area requests</h1>
   <div class="note">
-    ⚠️ No login on this page in v1 — anyone with the URL can see and resolve requests,
-    and can wipe all data. Fine for a small pilot with people you trust; add
-    authentication before wider rollout.
+    ⚠️ No login on this page in v1 — anyone with the URL can see requests, view hawkers,
+    and delete data. Fine for a small pilot with people you trust; add authentication
+    before wider rollout.
   </div>
+
+  <h1>👥 Registered hawkers</h1>
   <div class="card" style="text-align:center;">
-    <button id="reset-btn" style="background:#a01f1f;" onclick="resetAll()">🗑️ Clear ALL test data (hawkers, alerts, requests)</button>
+    <button id="reset-btn" style="background:#a01f1f;" onclick="resetAll()">🗑️ Clear EVERYTHING (all hawkers, alerts, requests)</button>
     <div id="reset-status" style="font-size:13px; margin-top:8px;"></div>
   </div>
+  <div id="hawker-list"><p class="empty">Loading…</p></div>
+
+  <h1>📋 Pending area requests</h1>
   <div id="list"><p class="empty">Loading…</p></div>
 </div>
 
@@ -46,13 +60,76 @@ async function resetAll() {
     const res = await fetch('/api/admin/reset', { method: 'POST' });
     if (!res.ok) throw new Error('failed');
     statusEl.textContent = '✅ All data cleared.';
-    load();
+    loadHawkers();
+    loadRequests();
   } catch (e) {
     statusEl.textContent = '❌ Error clearing data. Try again.';
   }
 }
 
-async function load() {
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function loadHawkers() {
+  const container = document.getElementById('hawker-list');
+  try {
+    const res = await fetch('/api/admin/hawkers');
+    const data = await res.json();
+    if (!data.hawkers.length) {
+      container.innerHTML = '<p class="empty">No hawkers registered yet.</p>';
+      return;
+    }
+    // Group by area for readability
+    const groups = {};
+    data.hawkers.forEach(h => {
+      const label = h.areaLabel ? h.areaLabel.en : h.area;
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(h);
+    });
+
+    container.innerHTML = '';
+    Object.keys(groups).forEach(label => {
+      const title = document.createElement('div');
+      title.className = 'area-group-title';
+      title.textContent = `${label} (${groups[label].length})`;
+      container.appendChild(title);
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      groups[label].forEach(h => {
+        const row = document.createElement('div');
+        row.className = 'hawker-row';
+        row.innerHTML = `
+          <div>
+            <div class="hawker-name">${escapeHtml(h.name)}</div>
+            <div class="hawker-phone">${escapeHtml(h.phone)}</div>
+          </div>
+          <button class="delete-btn" onclick="deleteHawker(${h.id}, '${escapeHtml(h.name)}')">Delete</button>
+        `;
+        card.appendChild(row);
+      });
+      container.appendChild(card);
+    });
+  } catch (e) {
+    container.innerHTML = '<p class="empty">Error loading hawkers.</p>';
+  }
+}
+
+async function deleteHawker(id, name) {
+  if (!confirm(`Remove ${name}? They'll need to register again to rejoin.`)) return;
+  try {
+    const res = await fetch(`/api/admin/hawkers/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('failed');
+    loadHawkers();
+  } catch (e) {
+    alert('Error deleting. Try again.');
+  }
+}
+
+async function loadRequests() {
   const res = await fetch('/api/area-requests');
   const data = await res.json();
   const list = document.getElementById('list');
@@ -68,25 +145,20 @@ async function load() {
     div.innerHTML = `
       <div class="req-name">${escapeHtml(r.requested_name)}</div>
       <div class="req-meta">Requested by: ${r.phone || 'unknown'} · ${time}</div>
-      <button onclick="resolve(${r.id})">Mark as added / resolved</button>
+      <button onclick="resolveRequest(${r.id})">Mark as added / resolved</button>
     `;
     list.appendChild(div);
   });
 }
 
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-async function resolve(id) {
+async function resolveRequest(id) {
   await fetch(`/api/area-requests/${id}/resolve`, { method: 'POST' });
-  load();
+  loadRequests();
 }
 
-load();
-setInterval(load, 10000);
+loadHawkers();
+loadRequests();
+setInterval(() => { loadHawkers(); loadRequests(); }, 10000);
 </script>
 </body>
 </html>
