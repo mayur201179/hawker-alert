@@ -385,6 +385,42 @@ app.post('/api/admin/reset', async (req, res) => {
   }
 });
 
+// Admin view: list every registered hawker, with their area's display label attached,
+// so individual test/unwanted entries can be reviewed and removed one at a time
+// instead of wiping everyone.
+app.get('/api/admin/hawkers', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM hawkers ORDER BY area, name');
+    const hawkers = result.rows.map(h => ({
+      ...h,
+      created_at: Number(h.created_at),
+      areaLabel: findArea(h.area) || null
+    }));
+    res.json({ hawkers });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Admin action: delete one specific hawker by id (also removes their push
+// subscription, if any, so it doesn't linger as an orphaned row).
+app.delete('/api/admin/hawkers/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const row = await pool.query('SELECT phone FROM hawkers WHERE id = $1', [id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'not found' });
+    const phone = row.rows[0].phone;
+
+    await pool.query('DELETE FROM hawkers WHERE id = $1', [id]);
+    await pool.query('DELETE FROM push_subscriptions WHERE phone = $1', [phone]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 initSchema()
   .then(() => {
     app.listen(PORT, () => {
