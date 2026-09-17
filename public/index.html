@@ -212,8 +212,31 @@ function areaLabelText(a) {
   return `${a.en} / ${a.hi} / ${a.mr}`;
 }
 
-function showScreen() {
+async function showScreen() {
   if (me && me.phone && me.area) {
+    // Don't just trust the phone's local memory — confirm the server still has
+    // this registration. If an admin reset wiped the database, this catches it
+    // and sends the person back to registration instead of showing a broken
+    // "logged in" screen that can't actually send/receive anything real.
+    let stillRegistered = false;
+    try {
+      const res = await fetch(API + `/api/hawkers/${encodeURIComponent(me.phone)}`);
+      const data = await res.json();
+      stillRegistered = data.exists;
+    } catch (e) {
+      // Network hiccup while checking — don't wrongly log someone out over a
+      // dropped connection; just proceed optimistically and let normal API
+      // calls surface any real problem.
+      stillRegistered = true;
+    }
+
+    if (!stillRegistered) {
+      localStorage.removeItem('hawker_me');
+      me = null;
+      showScreen();
+      return;
+    }
+
     document.getElementById('screen-register').style.display = 'none';
     document.getElementById('screen-app').style.display = 'block';
     document.getElementById('my-area').textContent = areaLabelText(me.areaLabel);
