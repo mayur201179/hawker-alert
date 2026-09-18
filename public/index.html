@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Hawker Alert · हॉकर अलर्ट · हॉकर सूचना</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root {
     --red: #d32f2f;
@@ -137,9 +139,10 @@
 
   <!-- MAIN APP SCREEN -->
   <div id="screen-app">
-    <div id="sound-banner" class="card" style="text-align:center; background:#fff3cd; cursor:pointer;" onclick="enableSound()">
-      🔊 <b>Tap here to turn on alert sound</b><br>
-      <span style="font-size:13px;">अलर्ट की आवाज़ चालू करने के लिए यहाँ दबाएँ · अलर्टचा आवाज सुरू करण्यासाठी इथे दाबा</span>
+    <div id="sound-banner" class="card" style="text-align:center; background:#fff3cd; cursor:pointer;" onclick="enableAlerts()">
+      🔔 <b>Tap here to turn on alert sound & notifications</b><br>
+      <span style="font-size:13px;">अलर्ट की आवाज़ और सूचनाएं चालू करने के लिए यहाँ दबाएँ · अलर्टचा आवाज आणि सूचना सुरू करण्यासाठी इथे दाबा</span><br>
+      <span style="font-size:12px; color:#775500;">Do this once — it's what lets alerts reach you even when your screen is locked.</span>
     </div>
     <div class="card" style="text-align:center;">
       <div class="area-pill" id="my-area">—</div>
@@ -344,7 +347,7 @@ async function sendAlert() {
 
   // Backup unlock: if they never tapped the sound banner, this tap (a real user
   // gesture) still unlocks audio for future incoming alerts this session.
-  if (!soundEnabled) enableSound();
+  if (!soundEnabled) enableAlerts();
 
   try {
     const res = await fetch(API + '/api/alert', {
@@ -379,9 +382,19 @@ function enableSound() {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     audioCtx.resume();
     soundEnabled = true;
-    document.getElementById('sound-banner').style.display = 'none';
     playAlarmSound(1.2); // short confirmation beep so they know it worked
   } catch (e) { /* Web Audio unsupported on this browser; sound just won't play */ }
+}
+
+// Called directly from the banner tap — a real, deliberate user gesture. Browsers
+// (Android Chrome especially) can silently refuse a notification-permission request
+// that isn't tied to an actual tap, so doing push setup here (rather than only
+// automatically on page load) is the reliable path to getting a 🔔 instead of a 🔕
+// on the admin page.
+async function enableAlerts() {
+  enableSound();
+  document.getElementById('sound-banner').style.display = 'none';
+  await setupPush();
 }
 
 function playAlarmSound(duration = 6.5) {
