@@ -67,6 +67,7 @@
     are optional; if left blank, the English name is used for those too (not an automatic
     translation — fill them in yourself if you know the local name).
   </p>
+  <button onclick="loadRequests()" style="background:#555; margin-bottom:12px;">🔄 Refresh requests</button>
   <div id="list"><p class="empty">Loading…</p></div>
 </div>
 
@@ -211,7 +212,10 @@ async function dismissRequest(id) {
 
 loadHawkers();
 loadRequests();
-setInterval(() => { loadHawkers(); loadRequests(); }, 10000);
+// Only the hawker list auto-refreshes — it has no editable text fields, so this can't
+// interrupt anything. The requests list has editable inputs (translation fields), so
+// it only refreshes when you explicitly click "Refresh requests" or approve/dismiss one.
+setInterval(loadHawkers, 10000);
 </script>
 </body>
 </html>
