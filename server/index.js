@@ -511,6 +511,31 @@ app.delete('/api/admin/hawkers/:id', async (req, res) => {
   }
 });
 
+// Admin action: delete an area. Blocked if any hawkers are still registered in it —
+// deleting out from under them would leave their app pointing at an area id that no
+// longer exists, breaking their registration in a confusing way. Applies uniformly
+// to every area, including the original 3 seeded from areas.json — nothing is
+// specially protected; "no members" is the only requirement.
+app.delete('/api/admin/areas/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const memberCount = await pool.query('SELECT COUNT(*) as c FROM hawkers WHERE area = $1', [id]);
+    if (Number(memberCount.rows[0].c) > 0) {
+      return res.status(400).json({
+        error: `Can't delete — ${memberCount.rows[0].c} hawker(s) are still registered in this area. Delete or move them first.`
+      });
+    }
+    const result = await pool.query('DELETE FROM areas WHERE id = $1', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'area not found' });
+
+    AREAS = AREAS.filter(a => a.id !== id); // update in-memory cache immediately
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 initSchema()
   .then(() => {
     app.listen(PORT, () => {
