@@ -61,6 +61,13 @@
   </div>
   <div id="hawker-list"><p class="empty">Loading…</p></div>
 
+  <h1>🗺️ Areas</h1>
+  <p style="font-size:13px; color:#777; margin-top:-8px;">
+    Delete an area only removes it from the picker — it's blocked if any hawkers are
+    still registered there (delete or move them first, from the hawker list above).
+  </p>
+  <div id="area-list"><p class="empty">Loading…</p></div>
+
   <h1>📋 Pending area requests</h1>
   <p style="font-size:13px; color:#777; margin-top:-8px;">
     Approving adds the area right away — no GitHub edit or redeploy needed. Hindi/Marathi
@@ -151,6 +158,52 @@ async function deleteHawker(id, name) {
   }
 }
 
+async function loadAreas() {
+  const container = document.getElementById('area-list');
+  try {
+    const res = await fetch('/api/areas');
+    const data = await res.json();
+    if (!data.areas.length) {
+      container.innerHTML = '<p class="empty">No areas yet.</p>';
+      return;
+    }
+    const card = document.createElement('div');
+    card.className = 'card';
+    data.areas.forEach(a => {
+      const row = document.createElement('div');
+      row.className = 'hawker-row';
+      const memberNote = a.members > 0
+        ? `<span style="font-size:12px; color:#a01f1f;">${a.members} member(s) — remove them first to delete</span>`
+        : '<span style="font-size:12px; color:#2e7d32;">No members — can delete</span>';
+      row.innerHTML = `
+        <div>
+          <div class="hawker-name">${escapeHtml(a.en)}</div>
+          <div class="hawker-phone">${escapeHtml(a.hi)} · ${escapeHtml(a.mr)}</div>
+          ${memberNote}
+        </div>
+        <button class="delete-btn" onclick="deleteArea('${a.id}', '${escapeHtml(a.en)}')">Delete</button>
+      `;
+      card.appendChild(row);
+    });
+    container.innerHTML = '';
+    container.appendChild(card);
+  } catch (e) {
+    container.innerHTML = '<p class="empty">Error loading areas.</p>';
+  }
+}
+
+async function deleteArea(id, name) {
+  if (!confirm(`Delete area "${name}"? Hawkers will no longer be able to select it.`)) return;
+  try {
+    const res = await fetch(`/api/admin/areas/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'failed');
+    loadAreas();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 async function loadRequests() {
   const res = await fetch('/api/area-requests');
   const data = await res.json();
@@ -199,6 +252,7 @@ async function approveRequest(requestId) {
     if (!res.ok) throw new Error(data.error || 'failed');
     alert(`Added! Hawkers can now select "${data.area.en}" right away.`);
     loadRequests();
+    loadAreas();
   } catch (e) {
     alert('Error adding area: ' + e.message);
   }
@@ -211,11 +265,13 @@ async function dismissRequest(id) {
 }
 
 loadHawkers();
+loadAreas();
 loadRequests();
-// Only the hawker list auto-refreshes — it has no editable text fields, so this can't
-// interrupt anything. The requests list has editable inputs (translation fields), so
-// it only refreshes when you explicitly click "Refresh requests" or approve/dismiss one.
-setInterval(loadHawkers, 10000);
+// The hawker and area lists auto-refresh — neither has editable text fields, so
+// this can't interrupt anything. The requests list has editable inputs (translation
+// fields), so it only refreshes when you explicitly click "Refresh requests" or
+// approve/dismiss one.
+setInterval(() => { loadHawkers(); loadAreas(); }, 10000);
 </script>
 </body>
 </html>
