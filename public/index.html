@@ -179,16 +179,31 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function setupPush() {
-  // Silently skip if this browser doesn't support push (older browsers, some iOS
-  // versions unless the app is added to the home screen first) — polling while the
-  // app is open still works regardless.
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  // Not supported at all (older browsers, some iOS versions unless added to the
+  // home screen first) — polling while the app is open still works regardless.
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { ok: false, reason: 'This browser doesn\'t support push notifications.' };
+  }
+
+  // If the browser has already permanently blocked notifications for this site
+  // (from an earlier dismissal, or Chrome's auto-block after repeated ignores),
+  // subscribe() will silently fail with no popup shown at all — catch that
+  // specific, very common case with a clear, actionable message.
+  if ('Notification' in window && Notification.permission === 'denied') {
+    return {
+      ok: false,
+      reason: 'Notifications are blocked for this site in your browser settings. ' +
+        'Tap the 🔒 or ⓘ icon next to the address bar → Permissions → Notifications → set to Allow, then reload this page and tap the banner again.'
+    };
+  }
 
   try {
     const reg = await navigator.serviceWorker.register('/sw.js');
     const keyRes = await fetch(API + '/api/vapid-public-key');
     const keyData = await keyRes.json();
-    if (!keyData.publicKey) return; // server hasn't set up push (no VAPID keys) — nothing to do
+    if (!keyData.publicKey) {
+      return { ok: false, reason: 'Push isn\'t configured on the server (missing VAPID keys).' };
+    }
 
     let subscription = await reg.pushManager.getSubscription();
     if (!subscription) {
@@ -203,10 +218,9 @@ async function setupPush() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone: me.phone, area: me.area, subscription: subscription.toJSON() })
     });
+    return { ok: true };
   } catch (e) {
-    // Most common cause: the person dismissed the "allow notifications" browser
-    // prompt. Not fatal — polling still works while the app is open.
-    console.warn('Push setup skipped:', e.message);
+    return { ok: false, reason: `${e.name || 'Error'}: ${e.message}` };
   }
 }
 
@@ -393,8 +407,18 @@ function enableSound() {
 // on the admin page.
 async function enableAlerts() {
   enableSound();
-  document.getElementById('sound-banner').style.display = 'none';
-  await setupPush();
+  const banner = document.getElementById('sound-banner');
+  banner.innerHTML = '⏳ Setting up notifications...';
+
+  const result = await setupPush();
+  if (result.ok) {
+    banner.style.background = '#d4edda';
+    banner.innerHTML = '✅ <b>Notifications enabled!</b><br><span style="font-size:13px;">You\'ll get alerts even with the screen locked.</span>';
+    setTimeout(() => { banner.style.display = 'none'; }, 4000);
+  } else {
+    banner.style.background = '#f8d7da';
+    banner.innerHTML = `❌ <b>Couldn't enable notifications</b><br><span style="font-size:13px;">${result.reason}</span><br><span style="font-size:12px; margin-top:6px; display:inline-block;">(Sound is on either way — alerts will still play while this app is open.)</span>`;
+  }
 }
 
 function playAlarmSound(duration = 6.5) {
