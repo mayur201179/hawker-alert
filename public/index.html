@@ -235,16 +235,26 @@ async function showScreen() {
     // this registration. If an admin reset wiped the database, this catches it
     // and sends the person back to registration instead of showing a broken
     // "logged in" screen that can't actually send/receive anything real.
-    let stillRegistered = false;
+    //
+    // IMPORTANT: only a genuine, successful "exists: false" counts as proof of
+    // that. Any other outcome — a network error, a transient server error, an
+    // unexpected response shape — must NOT log the person out. The cost of a
+    // false logout (forcing a real hawker to re-register mid-shift over a blip)
+    // is much worse than occasionally being slow to catch a truly stale login.
+    let stillRegistered = true; // fail OPEN by default
     try {
       const res = await fetch(API + `/api/hawkers/${encodeURIComponent(me.phone)}`);
-      const data = await res.json();
-      stillRegistered = data.exists;
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.exists === 'boolean') {
+          stillRegistered = data.exists;
+        }
+        // else: response was 200 but not in the expected shape — stay logged in,
+        // don't guess.
+      }
+      // else: non-200 (server error, cold start hiccup, etc.) — stay logged in.
     } catch (e) {
-      // Network hiccup while checking — don't wrongly log someone out over a
-      // dropped connection; just proceed optimistically and let normal API
-      // calls surface any real problem.
-      stillRegistered = true;
+      // Network error entirely — stay logged in.
     }
 
     if (!stillRegistered) {
