@@ -260,7 +260,16 @@ async function showScreen() {
     document.getElementById('my-info').textContent = me.name + ' · ' + me.phone;
     lastPoll = Date.now() - 1000 * 60 * 60; // show last hour on load
     startPolling();
-    setupPush(); // best-effort; silently does nothing if unsupported or not configured
+    // Check silently on load — if push is already working from a previous visit
+    // (the browser remembers the permission/subscription), hide the banner instead
+    // of asking again every single time. If it's not yet set up, leave the banner
+    // showing so they can tap it.
+    setupPush().then(result => {
+      if (result.ok) {
+        const banner = document.getElementById('sound-banner');
+        if (banner) banner.style.display = 'none';
+      }
+    });
   } else {
     document.getElementById('screen-register').style.display = 'block';
     document.getElementById('screen-app').style.display = 'none';
