@@ -140,9 +140,9 @@
   <!-- MAIN APP SCREEN -->
   <div id="screen-app">
     <div id="sound-banner" class="card" style="text-align:center; background:#fff3cd; cursor:pointer;" onclick="enableAlerts()">
-      🔔 <b>Tap here to turn on alert sound & notifications</b><br>
-      <span style="font-size:13px;">अलर्ट की आवाज़ और सूचनाएं चालू करने के लिए यहाँ दबाएँ · अलर्टचा आवाज आणि सूचना सुरू करण्यासाठी इथे दाबा</span><br>
-      <span style="font-size:12px; color:#775500;">Do this once — it's what lets alerts reach you even when your screen is locked.</span>
+      🔔 <b>Tap here to turn on alert sound</b><br>
+      <span style="font-size:13px;">अलर्ट की आवाज़ चालू करने के लिए यहाँ दबाएँ · अलर्टचा आवाज सुरू करण्यासाठी इथे दाबा</span><br>
+      <span style="font-size:12px; color:#775500;">Notifications work even without this — but for the loud siren sound, tap this once each time you freshly open the app (e.g. every morning). This is a phone/browser rule, not something we can skip.</span>
     </div>
     <div class="card" style="text-align:center;">
       <div class="area-pill" id="my-area">—</div>
@@ -270,16 +270,17 @@ async function showScreen() {
     document.getElementById('my-info').textContent = me.name + ' · ' + me.phone;
     lastPoll = Date.now() - 1000 * 60 * 60; // show last hour on load
     startPolling();
-    // Check silently on load — if push is already working from a previous visit
-    // (the browser remembers the permission/subscription), hide the banner instead
-    // of asking again every single time. If it's not yet set up, leave the banner
-    // showing so they can tap it.
-    setupPush().then(result => {
-      if (result.ok) {
-        const banner = document.getElementById('sound-banner');
-        if (banner) banner.style.display = 'none';
-      }
-    });
+    // Push subscription can genuinely be checked/refreshed silently in the
+    // background — no tap needed for that part, and doing this keeps the
+    // subscription alive even if they never touch the banner again this session.
+    setupPush();
+    // Sound is different: browsers flatly refuse to play audio without a fresh,
+    // real tap on THIS page load — there is no way to check in advance or skip
+    // this, and no way to "remember" it across a reload. So the banner must stay
+    // visible every single fresh visit specifically for that, even if push is
+    // already working. (A previous version of this code hid the banner whenever
+    // push was already active, which accidentally skipped sound setup entirely —
+    // that was a bug, not a feature; fixed now.)
   } else {
     document.getElementById('screen-register').style.display = 'block';
     document.getElementById('screen-app').style.display = 'none';
@@ -427,16 +428,16 @@ function enableSound() {
 async function enableAlerts() {
   enableSound();
   const banner = document.getElementById('sound-banner');
-  banner.innerHTML = '⏳ Setting up notifications...';
+  banner.innerHTML = '⏳ Sound is on. Setting up background notifications...';
 
   const result = await setupPush();
   if (result.ok) {
     banner.style.background = '#d4edda';
-    banner.innerHTML = '✅ <b>Notifications enabled!</b><br><span style="font-size:13px;">You\'ll get alerts even with the screen locked.</span>';
+    banner.innerHTML = '✅ <b>All set for this visit.</b><br><span style="font-size:13px;">Sound is on, and you\'ll also get alerts even with the screen locked or the app closed.</span>';
     setTimeout(() => { banner.style.display = 'none'; }, 4000);
   } else {
     banner.style.background = '#f8d7da';
-    banner.innerHTML = `❌ <b>Couldn't enable notifications</b><br><span style="font-size:13px;">${result.reason}</span><br><span style="font-size:12px; margin-top:6px; display:inline-block;">(Sound is on either way — alerts will still play while this app is open.)</span>`;
+    banner.innerHTML = `🔊 <b>Sound is on for this visit.</b> ❌ Background notifications couldn't be set up: <span style="font-size:13px;">${result.reason}</span><br><span style="font-size:12px; margin-top:6px; display:inline-block;">You'll still hear alerts while this app is open — just not with the screen locked or the app closed.</span>`;
   }
 }
 
